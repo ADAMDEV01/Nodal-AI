@@ -273,6 +273,11 @@ function taskDestinations(task: AgentTask): string[] {
       destinations.push((pay as Record<string, unknown>)?.destination);
     }
   }
+  if (task.type === 'claimable_balance' && p.action === 'create' && Array.isArray(p.claimants)) {
+    for (const claimant of p.claimants) {
+      destinations.push((claimant as Record<string, unknown>)?.destination);
+    }
+  }
   return destinations.filter((d): d is string => typeof d === 'string' && d.length > 0);
 }
 
