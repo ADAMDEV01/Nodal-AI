@@ -720,7 +720,7 @@ Each value below is a `BuiltinTaskType` wired into `PayFiAgent.run()` in `backen
 | `data_entry` | `DataEntryTool` | Set, delete, or read key-value data entries on an account. |
 | `sequence_number` | `SequenceNumberTool` | Fetch or bump the agent's current sequence number. |
 | `sponsored_account` | `SponsoredAccountTool` | Create a new Stellar account with sponsored reserves. |
-| `claimable_balance` | `ClaimableBalanceTool` | Create Stellar claimable balances or claim a balance for the agent. Creation is subject to the outgoing spending limit. |
+| `claimable_balance` | `ClaimableBalanceTool` | Create Stellar claimable balances or claim a balance for the agent. Creation is subject to the outgoing spending limit and the destination policy checks every claimant. |
 | `anchor_quote` | `AnchorQuoteTool` | Fetch an SEP-38 quote from an anchor for asset conversion. |
 | `nano_payment` | `NanoPaymentTool` | Send a feeless Nano micro-payment (raw units). |
 | `soroban_deploy` | `SorobanDeployTool` | Upload WASM bytecode and instantiate Soroban smart contracts. |
