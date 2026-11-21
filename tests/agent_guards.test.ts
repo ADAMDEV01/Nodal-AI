@@ -79,7 +79,7 @@ vi.mock('../backend/persistence', () => ({
     result.success ||
     result.errorType === 'VALIDATION_ERROR' ||
     result.errorType === 'POLICY_VIOLATION' ||
-    /\\bop_underfunded\\b/i.test(result.error ?? '')
+    /\bop_underfunded\b/i.test(result.error ?? '')
   ),
   pruneIdempotencyKeys: vi.fn(),
 }));
