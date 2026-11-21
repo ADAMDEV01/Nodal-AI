@@ -16,6 +16,7 @@ import { z } from 'zod';
 import {
   PayFiAgent,
   VALUE_MOVING_TASK_TYPES,
+  isValueMovingTask,
   spendingTracker,
   type AgentTask,
 } from '../backend/agent';
@@ -497,6 +498,27 @@ describe('PayFiAgent guards', () => {
           'x402_respond',
         ].sort()
       );
+    });
+
+    it('treats only claimable balance creation as value-moving', () => {
+      expect(
+        isValueMovingTask({
+          type: 'claimable_balance',
+          payload: {
+            action: 'create',
+            assetCode: 'XLM',
+            amount: '1',
+            claimants: [{ destination: DEST }],
+          },
+        })
+      ).toBe(true);
+
+      expect(
+        isValueMovingTask({
+          type: 'claimable_balance',
+          payload: { action: 'claim', balanceId: 'balance-id' },
+        })
+      ).toBe(false);
     });
   });
 
