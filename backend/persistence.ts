@@ -16,6 +16,7 @@
 import { createHash } from 'crypto';
 import Database from 'better-sqlite3';
 import type { AgentResult } from './agent';
+import { ErrorType } from './errors';
 import { config } from './config';
 import { migrateSqlite } from './db/migrate';
 
@@ -580,6 +581,27 @@ interface IdempotencyRecord {
 }
 
 /**
+ * Only cache outcomes that cannot become successful by retrying the same request.
+ * Network, rate-limit, unknown and other operational failures stay retryable.
+ */
+export function shouldCacheIdempotencyResult(result: AgentResult): boolean {
+  if (result.success) return true;
+  if (
+    result.errorType === ErrorType.ValidationError ||
+    result.errorType === ErrorType.PolicyViolation ||
+    /\\bop_underfunded\\b/i.test(result.error ?? '')
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/** Remove a cached idempotency outcome so a retry can execute normally. */
+export function deleteIdempotencyResult(key: string): void {
+  getDb().prepare(`DELETE FROM idempotency_keys WHERE key = ?`).run(key);
+}
+
+/**
  * Check if an idempotency key exists and is valid (not expired).
  * Returns the stored result if the key exists with the same payload hash.
  * Returns { conflict: true } if the key exists but payload differs.
@@ -620,8 +642,16 @@ export function getIdempotencyResult(
     return { conflict: true };
   }
 
-  // Return stored result
-  return JSON.parse(row.result) as AgentResult;
+  // Old versions cached every failure. Remove retryable failures on read so
+  // deployments upgraded in place do not keep replaying stale transient errors.
+  const result = JSON.parse(row.result) as AgentResult;
+  if (!shouldCacheIdempotencyResult(result)) {
+    db.prepare(`DELETE FROM idempotency_keys WHERE key = ?`).run(key);
+    return null;
+  }
+
+  // Return a cached success or definitive failure.
+  return result;
 }
 
 /**
@@ -635,6 +665,12 @@ export function saveIdempotencyResult(
   result: AgentResult
 ): void {
   const db = getDb();
+  if (!shouldCacheIdempotencyResult(result)) {
+    // A previous failure may have left a record for this key; clear it as well.
+    db.prepare(`DELETE FROM idempotency_keys WHERE key = ?`).run(key);
+    return;
+  }
+
   const now = Date.now();
   const expiresAt = now + 24 * 60 * 60 * 1000; // 24 hours
 
