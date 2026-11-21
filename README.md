@@ -737,6 +737,8 @@ Each value below is a `BuiltinTaskType` wired into `PayFiAgent.run()` in `backen
 | `soroban_storage` | `SorobanStorageTool` | Read a Soroban contract's storage entry (`persistent`, `temporary`, or `instance`) and return the decoded value. Read-only. |
 
 > **Standalone use:** read-only tools such as `BalanceCheckTool` (`backend/tools/BalanceCheckTool.ts`) and `SorobanQueryTool` (`backend/tools/SorobanQueryTool.ts`) can also be imported and used directly, outside the agent task loop, when you only need a query.
+>
+> `MemoAttachmentTool` remains a shared memo builder/validator used by payment tools; it does not represent an independent agent action.
 
 ### AgentTask
 
