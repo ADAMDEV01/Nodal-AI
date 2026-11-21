@@ -33,11 +33,13 @@ vi.mock('http', () => ({
 }));
 
 // Mock config module with deterministic values
+const { mockCorsAllowedOrigins } = vi.hoisted(() => ({ mockCorsAllowedOrigins: [] as string[] }));
 vi.mock('../backend/config', () => ({
   config: {
     STELLAR_NETWORK: 'testnet',
     AGENT_PUBLIC_KEY: 'GTEST1234567890123456789012345678901234567890123456',
     HEALTH_PORT: 3000,
+    CORS_ALLOWED_ORIGINS: mockCorsAllowedOrigins,
     // server.ts pulls in rpc_client, which builds a Horizon.Server at import
     // time; without these the URI constructor throws and the suite cannot load.
     HORIZON_URL: 'https://horizon-testnet.stellar.org',
@@ -143,6 +145,9 @@ function makeRes(): http.ServerResponse & {
     _statusCode: 0,
     _body: '',
     _headers: {},
+    setHeader: vi.fn(function (this: any, name: string, value: any) {
+      this._headers[name] = value;
+    }),
     writeHead: vi.fn(function (this: any, statusCode: number, headers?: Record<string, any>) {
       this._statusCode = statusCode;
       if (headers) Object.assign(this._headers, headers);
@@ -164,6 +169,7 @@ describe('backend/server.ts — health check HTTP server', () => {
     horizonOk = true;
     sorobanOk = true;
     databaseOk = true;
+    mockCorsAllowedOrigins.splice(0);
     delete process.env.WEBHOOK_SECRET;
     delete process.env.ADMIN_API_TOKEN;
     vi.clearAllMocks();
@@ -173,6 +179,74 @@ describe('backend/server.ts — health check HTTP server', () => {
     createHealthServer();
     // If createServer was called, our mock would have captured the handler
     expect(capturedHandler).toBeTypeOf('function');
+  });
+
+  describe('CORS', () => {
+    it('answers allowed preflight requests with only the configured origin', () => {
+      mockCorsAllowedOrigins.push('https://dashboard.example.com');
+      createHealthServer();
+      const req = makeReq('OPTIONS', '/status', {
+        origin: 'https://dashboard.example.com',
+        'access-control-request-method': 'POST',
+        'access-control-request-headers': 'authorization, content-type',
+      });
+      const res = makeRes();
+
+      capturedHandler!(req, res);
+
+      expect(res._statusCode).toBe(204);
+      expect(res._headers['Access-Control-Allow-Origin']).toBe('https://dashboard.example.com');
+      expect(res._headers['Access-Control-Allow-Methods']).toContain('POST');
+      expect(res._headers['Access-Control-Allow-Headers']).toContain('Authorization');
+      expect(res._headers['Access-Control-Allow-Credentials']).toBeUndefined();
+    });
+
+    it('rejects unlisted origins without returning CORS allow headers', () => {
+      mockCorsAllowedOrigins.push('https://dashboard.example.com');
+      createHealthServer();
+      const req = makeReq('OPTIONS', '/status', {
+        origin: 'https://attacker.example',
+        'access-control-request-method': 'POST',
+        'access-control-request-headers': 'authorization',
+      });
+      const res = makeRes();
+
+      capturedHandler!(req, res);
+
+      expect(res._statusCode).toBe(403);
+      expect(res._headers['Access-Control-Allow-Origin']).toBeUndefined();
+    });
+
+    it('rejects preflight requests for unsupported methods or headers', () => {
+      mockCorsAllowedOrigins.push('https://dashboard.example.com');
+      createHealthServer();
+      const req = makeReq('OPTIONS', '/status', {
+        origin: 'https://dashboard.example.com',
+        'access-control-request-method': 'DELETE',
+        'access-control-request-headers': 'x-unapproved-header',
+      });
+      const res = makeRes();
+
+      capturedHandler!(req, res);
+
+      expect(res._statusCode).toBe(403);
+      expect(res._headers['Access-Control-Allow-Origin']).toBeUndefined();
+    });
+
+    it('adds CORS headers to actual requests from allow-listed origins only', () => {
+      mockCorsAllowedOrigins.push('https://dashboard.example.com');
+      createHealthServer();
+      const allowedReq = makeReq('GET', '/status', { origin: 'https://dashboard.example.com' });
+      const allowedRes = makeRes();
+      capturedHandler!(allowedReq, allowedRes);
+      expect(allowedRes._headers['Access-Control-Allow-Origin']).toBe('https://dashboard.example.com');
+
+      createHealthServer();
+      const unlistedReq = makeReq('GET', '/status', { origin: 'https://attacker.example' });
+      const unlistedRes = makeRes();
+      capturedHandler!(unlistedReq, unlistedRes);
+      expect(unlistedRes._headers['Access-Control-Allow-Origin']).toBeUndefined();
+    });
   });
 
   describe('GET /health', () => {
