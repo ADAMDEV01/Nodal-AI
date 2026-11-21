@@ -27,6 +27,8 @@ import {
   expirePendingApprovals,
   getIdempotencyResult,
   saveIdempotencyResult,
+  deleteIdempotencyResult,
+  shouldCacheIdempotencyResult,
   pruneIdempotencyKeys,
   PendingApproval,
 } from './persistence';
@@ -1602,9 +1604,13 @@ export class PayFiAgent extends EventEmitter<AgentEvents> {
         const timestamp = new Date().toISOString();
         saveResult({ ...result, timestamp });
 
-        // Store idempotency result for failures too (#payment-idempotency)
+        // Cache only definitive failures. Retryable failures must leave the key free.
         if (task.idempotencyKey) {
-          saveIdempotencyResult(task.idempotencyKey, task.type, task.payload, result);
+          if (shouldCacheIdempotencyResult(result)) {
+            saveIdempotencyResult(task.idempotencyKey, task.type, task.payload, result);
+          } else {
+            deleteIdempotencyResult(task.idempotencyKey);
+          }
         }
 
         void dispatchWebhook(result);
@@ -1676,9 +1682,13 @@ export class PayFiAgent extends EventEmitter<AgentEvents> {
       const timestamp = new Date().toISOString();
       saveResult({ ...result, timestamp });
 
-      // Store idempotency result for middleware failures too
+      // Middleware failures are retryable unless they carry a definitive error type.
       if (task.idempotencyKey) {
-        saveIdempotencyResult(task.idempotencyKey, task.type, task.payload, result);
+        if (shouldCacheIdempotencyResult(result)) {
+          saveIdempotencyResult(task.idempotencyKey, task.type, task.payload, result);
+        } else {
+          deleteIdempotencyResult(task.idempotencyKey);
+        }
       }
 
       void dispatchWebhook(result);
