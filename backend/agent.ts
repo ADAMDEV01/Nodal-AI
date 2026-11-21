@@ -39,6 +39,7 @@ import {
   getErrorType,
   sanitizeCause,
 } from './errors';
+import type { ClaimableBalanceInput } from './tools/ClaimableBalanceTool';
 import { StellarPaymentTool } from './tools/StellarPaymentTool';
 import { SorobanInvokeTool } from './tools/SorobanInvokeTool';
 import { X402PaymentTool, X402Challenge, X402ChallengeSchema } from './tools/X402PaymentTool';
@@ -149,6 +150,12 @@ function taskSpends(task: AgentTask): TaskSpend[] {
   switch (task.type) {
     case 'stellar_payment':
       return one(p.amount, assetFieldsKey(p.assetCode, p.assetIssuer, 'XLM'));
+
+    case 'claimable_balance':
+      // Creating a balance submits an outgoing transaction; claiming one does not.
+      return p.action === 'create'
+        ? one(p.amount, assetFieldsKey(p.assetCode, p.assetIssuer, 'XLM'))
+        : [];
 
     case 'x402_respond':
       return one(
@@ -318,6 +325,7 @@ export type BuiltinTaskType =
   | 'soroban_query'
   | 'x402_respond'
   | 'account_info'
+  | 'claimable_balance'
   | 'change_trust'
   | 'multisig_payment'
   | 'batch_payment'
@@ -401,6 +409,7 @@ export type TaskPayloadMap = {
   soroban_invoke: { contractId: string; method: string; args?: unknown[] };
   x402_respond: { challenge: unknown };
   account_info: { accountId?: string };
+  claimable_balance: ClaimableBalanceInput;
   change_trust: { assetCode: string; assetIssuer: string; limit?: string };
   multisig_payment: {
     destination: string;
@@ -472,6 +481,7 @@ export type TaskResultMap = {
   soroban_invoke: { simulationResult: unknown };
   x402_respond: { txHash: string; nonce: string; payer: string; signedAt: string };
   account_info: unknown;
+  claimable_balance: { txHash: string; ledger: number };
   change_trust: { txHash: string; ledger: number };
   multisig_payment: { txHash: string; ledger: number };
   batch_payment: { txHashes: string[]; ledger: number };
@@ -564,6 +574,7 @@ export const VALUE_MOVING_TASK_TYPES: ReadonlySet<TaskType> = new Set<TaskType>(
   'stellar_payment',
   'soroban_invoke',
   'x402_respond',
+  'claimable_balance',
   'change_trust',
   'multisig_payment',
   'batch_payment',
