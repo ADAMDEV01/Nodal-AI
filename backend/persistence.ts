@@ -589,7 +589,7 @@ export function shouldCacheIdempotencyResult(result: AgentResult): boolean {
   if (
     result.errorType === ErrorType.ValidationError ||
     result.errorType === ErrorType.PolicyViolation ||
-    /\\bop_underfunded\\b/i.test(result.error ?? '')
+    /\bop_underfunded\b/i.test(result.error ?? '')
   ) {
     return true;
   }
