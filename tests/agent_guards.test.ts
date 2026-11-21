@@ -467,6 +467,7 @@ describe('PayFiAgent guards', () => {
           payload: { action: 'claim', balanceId: 'balance-id' },
         })
       ).toEqual([]);
+      vi.restoreAllMocks();
     });
 
     it('read-only tasks are not charged, whatever their payload says', async () => {
@@ -532,6 +533,7 @@ describe('PayFiAgent guards', () => {
       expect(result.success).toBe(false);
       expect(result.error).toContain('exceeds AGENT_SPENDING_LIMIT');
       expect(execute).not.toHaveBeenCalled();
+      vi.restoreAllMocks();
     });
 
     it('per-asset limits replace the single-payment AGENT_SPENDING_LIMIT check', async () => {
