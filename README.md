@@ -720,6 +720,7 @@ Each value below is a `BuiltinTaskType` wired into `PayFiAgent.run()` in `backen
 | `data_entry` | `DataEntryTool` | Set, delete, or read key-value data entries on an account. |
 | `sequence_number` | `SequenceNumberTool` | Fetch or bump the agent's current sequence number. |
 | `sponsored_account` | `SponsoredAccountTool` | Create a new Stellar account with sponsored reserves. |
+| `claimable_balance` | `ClaimableBalanceTool` | Create Stellar claimable balances or claim a balance for the agent. Creation is subject to the outgoing spending limit. |
 | `anchor_quote` | `AnchorQuoteTool` | Fetch an SEP-38 quote from an anchor for asset conversion. |
 | `nano_payment` | `NanoPaymentTool` | Send a feeless Nano micro-payment (raw units). |
 | `soroban_deploy` | `SorobanDeployTool` | Upload WASM bytecode and instantiate Soroban smart contracts. |
@@ -771,6 +772,7 @@ Input wrapper for task dispatch. The `payload` shape depends on `type`:
 - `data_entry`: `{ action: "set"; name: string; value: string }` or `{ action: "delete"; name: string }` or `{ action: "get"; name: string; accountId?: string }` (`name` and `value` are at most 64 bytes)
 - `sequence_number`: `{ action: "get"; accountId?: string }` or `{ action: "bump"; bumpTo: string | number | bigint }`
 - `sponsored_account`: `{ newAccountPublicKey: string; startingBalance?: string; newAccountSignature?: string; newAccountSecret?: string }` (`startingBalance` defaults to `"0"`; supply `newAccountSecret` or a base64 `newAccountSignature` so the new account co-signs the `endSponsoringFutureReserves` operation, which the network requires)
+- `claimable_balance`: `{ action: "create"; assetCode: string; assetIssuer?: string; amount: string; claimants: Array<{ destination: string; predicate?: ClaimPredicate }> }` or `{ action: "claim"; balanceId: string }`. Creation counts against the spending limit; claiming first verifies that the agent is a claimant.
 - `cross_border_payment`: `{ anchorDomain: string; amount: string; assetCode: string; assetIssuer: string; sender: Party; receiver: Party; destinationAsset?: string; fundingMethod?: string; jwt?: string }` where `Party` is `{ customerId: string }` or `{ kyc: KycFields; type?: string }`. See [Cross-border payments (SEP-31)](#cross-border-payments-sep-31).
 - `stellar_identity_auth`: `{ anchorUrl: string; publicKey?: string }` for SEP-10, or `{ homeDomain: string; contractAccount: string }` (a `C…` address) for SEP-45. Returns `{ token }`.
 - `anchor_quote`: `{ anchorQuoteUrl: string; sellAsset: string; buyAsset: string; sellAmount?: string; buyAmount?: string; context?: "sep6" | "sep31"; jwtToken?: string }` (at least one of `sellAmount` / `buyAmount` is required)
