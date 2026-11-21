@@ -4,10 +4,19 @@
  * Tests for backend/persistence.ts using an in-memory SQLite database.
  */
 
+import { createHash } from 'crypto';
 import { describe, it, expect, beforeEach } from 'vitest';
 import Database from 'better-sqlite3';
-import { saveResult, getResults, _setDb, closeDb } from '../backend/persistence';
+import {
+  saveResult,
+  getResults,
+  _setDb,
+  closeDb,
+  saveIdempotencyResult,
+  getIdempotencyResult,
+} from '../backend/persistence';
 import type { AgentResult } from '../backend/agent';
+import { ErrorType } from '../backend/errors';
 
 function makeInMemoryDb(): Database.Database {
   const db = new Database(':memory:');
@@ -25,8 +34,11 @@ function makeInMemoryDb(): Database.Database {
   return db;
 }
 
+let testDb: Database.Database;
+
 beforeEach(() => {
-  _setDb(makeInMemoryDb());
+  testDb = makeInMemoryDb();
+  _setDb(testDb);
 });
 
 const TIMESTAMP = '2026-06-25T22:00:00.000Z';
@@ -210,5 +222,82 @@ describe('persistence', () => {
     _setDb(null);
     expect(() => closeDb()).not.toThrow();
     expect(() => closeDb()).not.toThrow();
+  });
+
+
+  describe('idempotency result persistence', () => {
+    const payload = { amount: '5' };
+
+    it('does not cache retryable failures, leaving the same key available for a retry', () => {
+      const timeout: AgentResult = {
+        success: false,
+        taskType: 'stellar_payment',
+        error: 'Horizon request timed out',
+        errorType: ErrorType.NetworkTimeout,
+      };
+
+      saveIdempotencyResult('timeout-key', 'stellar_payment', payload, timeout);
+
+      expect(getIdempotencyResult('timeout-key', payload)).toBeNull();
+      expect(testDb.prepare('SELECT key FROM idempotency_keys WHERE key = ?').get('timeout-key')).toBeUndefined();
+    });
+
+    it('caches definitive validation, policy and op_underfunded failures', () => {
+      const definitive: Array<{ key: string; result: AgentResult }> = [
+        {
+          key: 'validation-key',
+          result: {
+            success: false,
+            taskType: 'stellar_payment',
+            error: 'Invalid payment amount',
+            errorType: ErrorType.ValidationError,
+          },
+        },
+        {
+          key: 'policy-key',
+          result: {
+            success: false,
+            taskType: 'stellar_payment',
+            error: 'Destination is blocked by policy',
+            errorType: ErrorType.PolicyViolation,
+          },
+        },
+        {
+          key: 'underfunded-key',
+          result: {
+            success: false,
+            taskType: 'stellar_payment',
+            error: 'Transaction failed: op_underfunded',
+            errorType: ErrorType.TransactionFailure,
+          },
+        },
+      ];
+
+      for (const { key, result } of definitive) {
+        saveIdempotencyResult(key, result.taskType, payload, result);
+        expect(getIdempotencyResult(key, payload)).toMatchObject(result);
+      }
+    });
+
+    it('removes retryable failure records left by an older application version', () => {
+      const key = 'legacy-timeout-key';
+      const now = Date.now();
+      const payloadHash = createHash('sha256').update(JSON.stringify(payload)).digest('hex');
+      const oldFailure: AgentResult = {
+        success: false,
+        taskType: 'stellar_payment',
+        error: 'Horizon unavailable',
+        errorType: ErrorType.NetworkTimeout,
+      };
+
+      testDb.prepare(
+        `INSERT INTO idempotency_keys
+           (key, payloadHash, taskType, status, result, createdAt, expiresAt)
+         VALUES (?, ?, ?, 'failure', ?, ?, ?)`
+      ).run(key, payloadHash, 'stellar_payment', JSON.stringify(oldFailure), now, now + 60_000);
+
+      expect(getIdempotencyResult(key, payload)).toBeNull();
+      expect(testDb.prepare('SELECT key FROM idempotency_keys WHERE key = ?').get(key)).toBeUndefined();
+    });
   });
 });
