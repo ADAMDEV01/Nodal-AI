@@ -77,6 +77,32 @@ const SpendingLimitSchema = z
   )
   .default('100');
 
+/**
+ * Parse and validate an explicit CORS origin allow-list.
+ * Origins must be serialized HTTP(S) origins (no paths, query strings, or wildcards).
+ */
+const CorsAllowedOriginsSchema = z
+  .string()
+  .default('')
+  .transform((value) => value.split(',').map((origin) => origin.trim()).filter(Boolean))
+  .refine(
+    (origins) =>
+      origins.every((origin) => {
+        try {
+          const parsed = new URL(origin);
+          return (
+            (parsed.protocol === 'http:' || parsed.protocol === 'https:') &&
+            parsed.origin === origin &&
+            parsed.username === '' &&
+            parsed.password === ''
+          );
+        } catch {
+          return false;
+        }
+      }),
+    { message: 'CORS_ALLOWED_ORIGINS must be a comma-separated list of exact HTTP(S) origins' }
+  );
+
 // ─── Raw environment schema ───────────────────────────────────────────────────
 
 export const EnvSchema = z.object({
@@ -263,6 +289,9 @@ export const EnvSchema = z.object({
 
   // Health check HTTP server
   HEALTH_PORT: z.coerce.number().int().min(1).max(65535).default(3000),
+
+  // Empty by default: browser access is opt-in per trusted frontend origin.
+  CORS_ALLOWED_ORIGINS: CorsAllowedOriginsSchema,
 
   // Nano node RPC endpoint used by NanoPaymentTool.
   NANO_RPC_URL: z.string().url().default('http://127.0.0.1:7076'),
@@ -673,6 +702,8 @@ export interface AgentConfig {
    * Defaults to 3000.
    */
   readonly HEALTH_PORT: number;
+  /** Exact HTTP(S) origins allowed to call the health HTTP API from browsers. */
+  readonly CORS_ALLOWED_ORIGINS: string[];
 
   /** Nano node RPC endpoint used by NanoPaymentTool (default: http://127.0.0.1:7076). */
   readonly NANO_RPC_URL: string;
