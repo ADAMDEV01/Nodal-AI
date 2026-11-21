@@ -226,6 +226,40 @@ const STREAM_PATH = '/stream';
 const ADMIN_PAUSE_PATH = '/admin/pause';
 const ADMIN_RESUME_PATH = '/admin/resume';
 
+const CORS_ALLOWED_METHODS = new Set(['GET', 'POST']);
+const CORS_ALLOWED_HEADERS = new Set(['authorization', 'content-type']);
+
+/** Respond to a browser CORS preflight only for explicitly configured origins. */
+function handleCorsPreflight(req: http.IncomingMessage, res: http.ServerResponse): void {
+  const origin = req.headers.origin;
+  const requestedMethod = req.headers['access-control-request-method']?.toUpperCase();
+  const requestedHeaders = (req.headers['access-control-request-headers'] ?? '')
+    .split(',')
+    .map((header) => header.trim().toLowerCase())
+    .filter(Boolean);
+  const originAllowed = Boolean(origin && config.CORS_ALLOWED_ORIGINS.includes(origin));
+  const methodAllowed = Boolean(requestedMethod && CORS_ALLOWED_METHODS.has(requestedMethod));
+  const headersAllowed = requestedHeaders.every((header) => CORS_ALLOWED_HEADERS.has(header));
+
+  if (!originAllowed || !methodAllowed || !headersAllowed) {
+    res.writeHead(403, {
+      'Content-Type': 'application/json',
+      Vary: 'Origin, Access-Control-Request-Method, Access-Control-Request-Headers',
+    });
+    res.end(JSON.stringify({ error: 'CORS preflight not allowed' }));
+    return;
+  }
+
+  res.writeHead(204, {
+    'Access-Control-Allow-Origin': origin!,
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+    'Access-Control-Max-Age': '600',
+    Vary: 'Origin, Access-Control-Request-Method, Access-Control-Request-Headers',
+  });
+  res.end();
+}
+
 /**
  * Creates and returns the health-check HTTP server.
  * Does NOT call `.listen()` — the caller (typically `index.ts`) is responsible
@@ -234,6 +268,19 @@ const ADMIN_RESUME_PATH = '/admin/resume';
  */
 export function createHealthServer(agent?: PayFiAgent): http.Server {
   const server = http.createServer((req, res) => {
+    // Handle preflight before authentication and route dispatch. Browsers send
+    // OPTIONS without the Authorization header that the subsequent request uses.
+    if (req.method === 'OPTIONS') {
+      handleCorsPreflight(req, res);
+      return;
+    }
+
+    // Attach CORS headers to actual responses only for an exact allow-listed origin.
+    const origin = req.headers.origin;
+    if (origin && config.CORS_ALLOWED_ORIGINS.includes(origin)) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Vary', 'Origin');
+    }
     // ── GET /health ────────────────────────────────────────────────────────
     if (req.method === 'GET' && req.url === HEALTH_PATH) {
       // Delegate to the real implementation: it probes Horizon, Soroban and
