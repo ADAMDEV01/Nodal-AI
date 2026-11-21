@@ -571,9 +571,9 @@ export interface AgentResult {
 }
 
 /**
- * Tasks that sign and submit a transaction from the agent account. These are
- * halted while the kill switch is engaged; every other task is read-only and
- * keeps working.
+ * Task types with at least one operation that moves value or spends fees.
+ * Payload-sensitive tasks are narrowed by isValueMovingTask() before guards
+ * such as the kill switch, destination policy, and approval gate are applied.
  */
 export const VALUE_MOVING_TASK_TYPES: ReadonlySet<TaskType> = new Set<TaskType>([
   'stellar_payment',
@@ -595,6 +595,20 @@ export const VALUE_MOVING_TASK_TYPES: ReadonlySet<TaskType> = new Set<TaskType>(
   'set_options',
   'cross_border_payment',
 ]);
+
+/**
+ * Whether this particular task payload can move value out of the agent account.
+ * Claimable-balance creation funds a balance for claimants; claiming an
+ * existing balance is an incoming transfer and does not use the outgoing
+ * spending, destination, pause, or approval guards.
+ */
+export function isValueMovingTask(task: AgentTask): boolean {
+  if (task.type === 'claimable_balance') {
+    const payload = task.payload as ClaimableBalanceInput | null | undefined;
+    return payload?.action === 'create';
+  }
+  return VALUE_MOVING_TASK_TYPES.has(task.type);
+}
 
 // ─── Middleware types ─────────────────────────────────────────────────────────────
 
@@ -1373,17 +1387,17 @@ export class PayFiAgent extends EventEmitter<AgentEvents> {
       // tool succeeds, released if anything before that throws.
       let reservationIds: string[] = [];
       try {
-        if (VALUE_MOVING_TASK_TYPES.has(task.type) && isPaused()) {
+        if (isValueMovingTask(task) && isPaused()) {
           throw new AgentPausedError(
             `Agent is paused — ${task.type} is halted until an operator resumes it`
           );
         }
 
-        if (VALUE_MOVING_TASK_TYPES.has(task.type)) {
+        if (isValueMovingTask(task)) {
           assertDestinationsAllowed(task);
         }
 
-        if (VALUE_MOVING_TASK_TYPES.has(task.type) && !this.approvedTasks.has(task)) {
+        if (isValueMovingTask(task) && !this.approvedTasks.has(task)) {
           const held = this.holdForApproval(task, correlationId);
           if (held) return held;
         }
