@@ -631,6 +631,23 @@ describe('PayFiAgent guards', () => {
         expect(result.errorType).toBe(ErrorType.PolicyViolation);
       }
     });
+
+    it('applies destination policy to claimable balance beneficiaries', async () => {
+      mutableConfig.PAYMENT_DESTINATION_POLICY = 'allowlist';
+
+      const result = await agent.run({
+        type: 'claimable_balance',
+        payload: {
+          action: 'create',
+          assetCode: 'XLM',
+          amount: '1',
+          claimants: [{ destination: DEST }],
+        },
+      } as AgentTask);
+
+      expect(result.errorType).toBe(ErrorType.PolicyViolation);
+      expect(result.error).toContain(DEST);
+    });
   });
 
   describe('approvals', () => {
