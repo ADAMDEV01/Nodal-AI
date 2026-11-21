@@ -59,6 +59,8 @@ const ClaimClaimableBalanceSchema = z.object({
   balanceId: z.string().min(1),
 });
 
+export type ClaimPredicate = z.infer<typeof ClaimPredicateSchema>;
+
 export const ClaimableBalanceInputSchema = z.discriminatedUnion('action', [
   CreateClaimableBalanceSchema,
   ClaimClaimableBalanceSchema,
