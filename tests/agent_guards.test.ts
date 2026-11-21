@@ -21,12 +21,13 @@ import {
 } from '../backend/agent';
 import { failureAlerts } from '../backend/alerts';
 import { config } from '../backend/config';
-import { ErrorType, ValidationError } from '../backend/errors';
+import { ErrorType, NetworkTimeoutError, ValidationError } from '../backend/errors';
 import {
   appendAuditEntry,
   decideApproval,
   expirePendingApprovals,
   getIdempotencyResult,
+  deleteIdempotencyResult,
   getPendingApproval,
   listPendingApprovals,
   pruneIdempotencyKeys,
@@ -73,6 +74,13 @@ vi.mock('../backend/persistence', () => ({
   expirePendingApprovals: vi.fn(() => []),
   getIdempotencyResult: vi.fn(),
   saveIdempotencyResult: vi.fn(),
+  deleteIdempotencyResult: vi.fn(),
+  shouldCacheIdempotencyResult: vi.fn((result: { success: boolean; errorType?: string; error?: string }) =>
+    result.success ||
+    result.errorType === 'VALIDATION_ERROR' ||
+    result.errorType === 'POLICY_VIOLATION' ||
+    /\\bop_underfunded\\b/i.test(result.error ?? '')
+  ),
   pruneIdempotencyKeys: vi.fn(),
 }));
 
@@ -159,6 +167,7 @@ describe('PayFiAgent guards', () => {
     spendingTracker.clear();
     vi.mocked(getPendingApproval).mockReset();
     vi.mocked(getIdempotencyResult).mockReset();
+    vi.mocked(deleteIdempotencyResult).mockReset();
     vi.mocked(decideApproval).mockReset().mockReturnValue(true);
     vi.mocked(expirePendingApprovals).mockReset().mockReturnValue([]);
     vi.mocked(listPendingApprovals).mockReset().mockReturnValue([]);
@@ -872,7 +881,7 @@ describe('PayFiAgent guards', () => {
       expect(payment).not.toHaveBeenCalled();
     });
 
-    it('stores the outcome for success and failure, and only with a key', async () => {
+    it('stores success, clears retryable failures, and ignores tasks without a key', async () => {
       const ok = await agent.run(keyed as AgentTask);
       expect(saveIdempotencyResult).toHaveBeenCalledWith(
         'k1',
@@ -882,35 +891,63 @@ describe('PayFiAgent guards', () => {
       );
 
       vi.mocked(saveIdempotencyResult).mockClear();
-      stubTool('stellar_payment').mockRejectedValue(new Error('x'));
-      const failed = await agent.run(keyed as AgentTask);
+      const failed = await failingPayment(new Error('temporary network problem'), keyed.payload);
+      expect(failed.success).toBe(false);
+      expect(saveIdempotencyResult).not.toHaveBeenCalled();
+      expect(deleteIdempotencyResult).toHaveBeenCalledWith('k1');
+
+      vi.mocked(saveIdempotencyResult).mockClear();
+      vi.mocked(deleteIdempotencyResult).mockClear();
+      await agent.run({ type: 'stellar_payment', payload: { amount: '1' } } as AgentTask);
+      expect(saveIdempotencyResult).not.toHaveBeenCalled();
+      expect(deleteIdempotencyResult).not.toHaveBeenCalled();
+      expect(getIdempotencyResult).toHaveBeenCalledTimes(2);
+    });
+
+    it('executes the same keyed request again after a transient timeout', async () => {
+      const payment = stubTool('stellar_payment')
+        .mockRejectedValueOnce(new NetworkTimeoutError('Horizon timed out'))
+        .mockResolvedValueOnce({ txHash: 'retry-succeeded', ledger: 2 });
+
+      const first = await agent.run(keyed as AgentTask);
+      expect(first.success).toBe(false);
+      expect(first.errorType).toBe(ErrorType.NetworkTimeout);
+      expect(deleteIdempotencyResult).toHaveBeenCalledWith('k1');
+
+      const second = await agent.run(keyed as AgentTask);
+      expect(second.success).toBe(true);
+      expect(payment).toHaveBeenCalledTimes(2);
+      expect(saveIdempotencyResult).toHaveBeenCalledWith(
+        'k1',
+        'stellar_payment',
+        keyed.payload,
+        second
+      );
+    });
+
+    it('still caches validation failures because the caller must change the request', async () => {
+      const failed = await failingPayment(new ValidationError('Invalid payment amount'), keyed.payload);
+
+      expect(failed.success).toBe(false);
       expect(saveIdempotencyResult).toHaveBeenCalledWith(
         'k1',
         'stellar_payment',
         keyed.payload,
         failed
       );
-
-      vi.mocked(saveIdempotencyResult).mockClear();
-      await agent.run({ type: 'stellar_payment', payload: { amount: '1' } } as AgentTask);
-      expect(saveIdempotencyResult).not.toHaveBeenCalled();
-      expect(getIdempotencyResult).toHaveBeenCalledTimes(2);
+      expect(deleteIdempotencyResult).not.toHaveBeenCalled();
     });
 
-    it('stores the outcome when middleware throws', async () => {
+    it('clears the key when middleware fails before a task can complete', async () => {
       agent.use(async () => {
-        throw new Error('blocked');
+        throw new Error('temporary middleware failure');
       });
 
       const result = await agent.run(keyed as AgentTask);
 
-      expect(result.error).toBe('blocked');
-      expect(saveIdempotencyResult).toHaveBeenCalledWith(
-        'k1',
-        'stellar_payment',
-        keyed.payload,
-        result
-      );
+      expect(result.error).toBe('temporary middleware failure');
+      expect(saveIdempotencyResult).not.toHaveBeenCalled();
+      expect(deleteIdempotencyResult).toHaveBeenCalledWith('k1');
     });
   });
 
